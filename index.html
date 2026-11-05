@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>पोस्ट ऑटोमेशन</title>
+<style>
+  :root {
+    --paper: #fbf9fc;
+    --ink: #1d1b2e;
+    --muted: #6b6880;
+    --line: #e2dde9;
+    --pink: #c7305f;
+    --pink-dark: #a32149;
+    --ok: #1f7a4d;
+    --bad: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #17151f;
+      --ink: #f1eef7;
+      --muted: #a29eb5;
+      --line: #36324a;
+      --pink: #e0527f;
+      --pink-dark: #ee6c95;
+      --ok: #4fc58a;
+      --bad: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Noto Sans Devanagari", sans-serif;
+  }
+  main { max-width: 520px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  h2 { font-size: 1.1rem; margin: 28px 0 10px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  input, textarea, button {
+    font: inherit; color: inherit; width: 100%;
+    padding: 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: transparent;
+  }
+  textarea { min-height: 130px; resize: vertical; }
+  input:focus-visible, textarea:focus-visible, button:focus-visible {
+    outline: 2px solid var(--pink); outline-offset: 2px;
+  }
+  button { cursor: pointer; font-weight: 600; }
+  button.primary { background: var(--pink); border-color: var(--pink); color: #fff; }
+  button.primary:active { background: var(--pink-dark); }
+  button:disabled { opacity: .55; cursor: default; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .msg { min-height: 1.4em; margin: 12px 0 0; font-size: .95rem; }
+  .msg.err { color: var(--bad); }
+  .msg.good { color: var(--ok); }
+  #preview { display: none; width: 100%; max-height: 260px; object-fit: contain; margin-top: 10px; border-radius: 10px; }
+  .post { display: flex; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .post img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; flex: none; }
+  .post p { margin: 0; }
+  .cap { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .meta { font-size: .85rem; color: var(--muted); margin-top: 2px; }
+  .st-posted { color: var(--ok); font-weight: 600; }
+  .st-failed { color: var(--bad); font-weight: 600; }
+  .del { width: auto; padding: 4px 10px; font-size: .85rem; margin-top: 6px; }
+  @media (prefers-reduced-motion: no-preference) { button { transition: background .15s; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>पोस्ट ऑटोमेशन</h1>
+  <p class="sub">कैप्शन बनाएँ, इमेज चुनें, Instagram पर पोस्ट या शेड्यूल करें।</p>
+
+  <label for="pw">ऐप पासवर्ड</label>
+  <input id="pw" type="password" autocomplete="current-password" placeholder="वही पासवर्ड जो Render में APP_PASSWORD है">
+
+  <h2>नई पोस्ट</h2>
+
+  <label for="topic">पोस्ट किस बारे में है?</label>
+  <input id="topic" type="text" placeholder="जैसे: जयपुर की पुरानी गलियाँ">
+  <button id="genBtn" style="margin-top:10px">AI से कैप्शन बनाएँ</button>
+
+  <label for="caption">कैप्शन</label>
+  <textarea id="caption" placeholder="यहाँ कैप्शन लिखें या ऊपर से बनवाएँ"></textarea>
+
+  <label for="image">इमेज (JPEG)</label>
+  <input id="image" type="file" accept="image/jpeg">
+  <img id="preview" alt="चुनी हुई इमेज">
+
+  <label for="when">शेड्यूल का समय (खाली छोड़ें तो अभी पोस्ट होगी)</label>
+  <input id="when" type="datetime-local">
+
+  <div class="row" style="margin-top:18px">
+    <button id="postBtn" class="primary">पोस्ट करें</button>
+  </div>
+  <p id="msg" class="msg" role="status"></p>
+
+  <h2>आपकी पोस्ट</h2>
+  <div id="list"><p class="meta">अभी कोई पोस्ट नहीं है। ऊपर से पहली पोस्ट बनाएँ।</p></div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const pw = $('pw');
+try { pw.value = localStorage.getItem('appPw') || ''; } catch (e) {}
+
+function say(text, kind) {
+  const m = $('msg');
+  m.textContent = text;
+  m.className = 'msg ' + (kind || '');
+}
+function headers(extra) {
+  try { localStorage.setItem('appPw', pw.value); } catch (e) {}
+  return Object.assign({ 'x-app-password': pw.value }, extra || {});
+}
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'कुछ गड़बड़ हुई');
+  return data;
+}
+
+$('image').addEventListener('change', e => {
+  const f = e.target.files[0];
+  const p = $('preview');
+  if (!f) { p.style.display = 'none'; return; }
+  p.src = URL.createObjectURL(f);
+  p.style.display = 'block';
+});
+
+$('genBtn').addEventListener('click', async () => {
+  const btn = $('genBtn');
+  btn.disabled = true; say('कैप्शन बन रहा है…');
+  try {
+    const d = await api('/api/caption', {
+      method: 'POST',
+      headers: headers({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ topic: $('topic').value })
+    });
+    $('caption').value = d.caption;
+    say('कैप्शन तैयार है। चाहें तो बदल लें।', 'good');
+  } catch (e) { say(e.message, 'err'); }
+  btn.disabled = false;
+});
+
+$('postBtn').addEventListener('click', async () => {
+  const btn = $('postBtn');
+  const file = $('image').files[0];
+  if (!file) return say('पहले इमेज चुनें', 'err');
+  const when = $('when').value;
+  const fd = new FormData();
+  fd.append('image', file);
+  fd.append('caption', $('caption').value);
+  if (when) fd.append('scheduledAt', new Date(when).toISOString());
+  btn.disabled = true; say(when ? 'शेड्यूल हो रहा है…' : 'पोस्ट हो रही है…');
+  try {
+    const p = await api('/api/posts', { method: 'POST', headers: headers(), body: fd });
+    if (p.status === 'failed') say('पोस्ट नहीं हुई: ' + p.error, 'err');
+    else say(p.status === 'posted' ? 'पोस्ट हो गई' : 'शेड्यूल हो गई', 'good');
+    $('image').value = ''; $('preview').style.display = 'none';
+    $('caption').value = ''; $('when').value = '';
+    load();
+  } catch (e) { say(e.message, 'err'); }
+  btn.disabled = false;
+});
+
+async function load() {
+  if (!pw.value) return;
+  try {
+    const posts = await api('/api/posts', { headers: headers() });
+    const list = $('list');
+    if (!posts.length) return;
+    list.innerHTML = '';
+    const names = { scheduled: 'शेड्यूल्ड', posted: 'पोस्ट हो गई', failed: 'फ़ेल' };
+    posts.forEach(p => {
+      const d = document.createElement('div');
+      d.className = 'post';
+      const img = document.createElement('img');
+      img.src = p.imageUrl; img.alt = '';
+      const box = document.createElement('div');
+      const cap = document.createElement('p');
+      cap.className = 'cap'; cap.textContent = p.caption || '(बिना कैप्शन)';
+      const meta = document.createElement('p');
+      meta.className = 'meta';
+      const st = document.createElement('span');
+      st.className = 'st-' + p.status; st.textContent = names[p.status] || p.status;
+      meta.append(st);
+      if (p.scheduledAt && p.status === 'scheduled') {
+        meta.append(' · ' + new Date(p.scheduledAt).toLocaleString('hi-IN'));
+      }
+      if (p.error) meta.append(' · ' + p.error);
+      const del = document.createElement('button');
+      del.className = 'del'; del.textContent = 'हटाएँ';
+      del.onclick = async () => {
+        await api('/api/posts/' + p.id, { method: 'DELETE', headers: headers() });
+        load();
+      };
+      box.append(cap, meta, del);
+      d.append(img, box);
+      list.append(d);
+    });
+  } catch (e) { /* पासवर्ड गलत हो तो लिस्ट खाली रहेगी */ }
+}
+pw.addEventListener('change', load);
+load();
+</script>
+</body>
+</html>
